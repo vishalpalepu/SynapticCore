@@ -12,12 +12,11 @@ type Writer struct {
 	Driver neo4j.DriverWithContext
 }
 
-func (w *Writer) WriteExtraction(
-	ctx context.Context,
-	docID string,
-	chunk extractor.Chunk,
-	result *extractor.GraphResult,
-) error {
+//
+// =========== WRAPPER FOR HAVING A ROLLBACK IN CASE OF ERROR+= TO SUPPORT TRANSACTIONAL INTEGRITY (to incase anyone fails everything is rolled back) ==================
+//
+
+func (w *Writer) WriteExtraction(ctx context.Context, docID string, chunk extractor.Chunk, result *extractor.GraphResult) error {
 
 	session := w.Driver.NewSession(ctx, neo4j.SessionConfig{
 		AccessMode: neo4j.AccessModeWrite,
@@ -48,12 +47,7 @@ func (w *Writer) WriteExtraction(
 	return err
 }
 
-func (w *Writer) WriteExtractionOptimized(
-	ctx context.Context,
-	docID string,
-	chunk extractor.Chunk,
-	result *extractor.GraphResult,
-) error {
+func (w *Writer) WriteExtractionOptimized(ctx context.Context, docID string, chunk extractor.Chunk, result *extractor.GraphResult) error {
 
 	session := w.Driver.NewSession(ctx, neo4j.SessionConfig{
 		AccessMode: neo4j.AccessModeWrite,
@@ -74,21 +68,21 @@ func (w *Writer) WriteExtractionOptimized(
 				return nil, err
 			}
 		}
+		// 3. Relationships (grouped by type + labels)
+		groupedRels := groupRelationshipsAdvanced(result.Relationships)
 
-		grouped := groupRelationshipsByType(result.Relationships)
-
-		for relType, rels := range grouped {
-			if err := w.batchMergeRelationships(ctx, tx, relType, rels); err != nil {
+		for key, rels := range groupedRels {
+			if err := w.batchMergeRelationshipsWithLabels(ctx, tx, key, rels); err != nil {
 				return nil, err
 			}
 		}
-
 		return nil, nil
 	})
 
 	return err
 }
 
+// ====== To Write the user data into Neo4j(actual data) ===========
 func (w *Writer) writeChunk(ctx context.Context, tx neo4j.ManagedTransaction, docID string, chunk extractor.Chunk) error {
 
 	query := `
@@ -96,11 +90,11 @@ MERGE (d:document {uid:$doc_uid})
 SET d.id = $doc_id
 
 MERGE (c:chunk {uid : $chunk_uid})
-SET c.text =  $text
-	c.index = $idx
-	c.parent_uid = $parent_uid
-	c.doc_uid = $doc_uid
-	c.token_count = $tokens
+SET c.text =  $text,
+	c.index = $idx,
+	c.parent_uid = $parent_uid,
+	c.doc_uid = $doc_uid,
+	c.token_count = $tokens,
 	c.updated_at = datetime()
 
 MERGE (d)-[:HAS_CHUNK]->(c)
@@ -141,6 +135,10 @@ MERGE (prev)-[:NEXT_CHUNK]->(curr)
 	return nil
 }
 
+//
+//============= MERGE THE NODES =================
+//
+
 // this mergeNode does a DB call for each Node but the Kafka will send the data in huge size which will cost a lot of latency
 // also not applied the locks aswell
 // created new methods for Writer to be able to solve these problems below
@@ -178,7 +176,6 @@ SET x.name = $name,
 // what it does is based on a single label multiple Nodes will be created ans shown below and x._lock is for atomicity
 // to avoid race conditions
 func (w *Writer) batchMergeNodesByLabel(ctx context.Context, tx neo4j.ManagedTransaction, label string, nodes []extractor.Node) error {
-
 	query := fmt.Sprintf(`
 UNWIND $nodes AS n
 MERGE (x:%s {uid: n.uid})
@@ -186,20 +183,23 @@ SET x._lock = true
 WITH x, n
 SET x.name = n.name,
     x += n.properties,
-    x.source_id = n.metadata.source_id,
-    x.confidence = n.metadata.confidence,
-    x.t_valid = n.metadata.t_valid,
-    x.t_invalid = n.metadata.t_invalid,
-    x.t_ingest = n.metadata.t_ingest
+    x.source_id = n.source_id,
+    x.confidence = n.confidence,
+    x.t_valid = n.t_valid,
+    x.t_invalid = n.t_invalid,
+    x.t_ingest = n.t_ingest
 REMOVE x._lock
 `, label)
 
 	_, err := tx.Run(ctx, query, map[string]any{
-		"nodes": nodes,
+		"nodes": nodesToMap(nodes),
 	})
 
 	return err
 }
+
+//
+//====================== MERGE RELATIONSHIP ========================
 
 // this create relationship one by one which make a lot of DB calls to avoid we can perform batch tarnsactions
 func (w *Writer) mergeRelationship(ctx context.Context, tx neo4j.ManagedTransaction, r extractor.Relationship) error {
@@ -234,28 +234,64 @@ SET rel += $props,
 
 	return nil
 }
-func (w *Writer) batchMergeRelationships(ctx context.Context, tx neo4j.ManagedTransaction,relType string ,rels []extractor.Relationship) error{
 
-	query :=fmt.Sprintf( `
-UNWIND $rels as r
-MATCH (a {uid: $source_uid})
-MATCH (b {uid: $target_uid})
+// much faster than mergeRelationship slower than batchMergeRelationshipsWithLabels
+func (w *Writer) batchMergeRelationships(ctx context.Context, tx neo4j.ManagedTransaction, relType string, rels []extractor.Relationship) error {
+
+	query := fmt.Sprintf(`
+UNWIND $rels AS r
+MATCH (a:$(r.source_label) {uid: r.source_uid})
+MATCH (b:$(r.target_label) {uid: r.target_uid})
 MERGE (a)-[rel:%s {uid: r.uid}]->(b)
+SET rel._lock = true // Manual write lock to prevent Lost Updates
+WITH rel, r
 SET rel += r.properties,
-    rel.source_id = r.metadata.source_id,
-    rel.confidence = r.metadata.confidence,
-    rel.t_valid = r.metadata.t_valid,
-    rel.t_invalid = r.metadata.t_invalid,
-    rel.t_ingest = r.metadata.t_ingest
-REMOVE rel._lock`,relType)
+    rel.source_id = r.source_id,
+    rel.confidence = r.confidence,
+    rel.t_valid = r.t_valid,
+    rel.t_ingest = datetime()
+REMOVE rel._lock`, relType)
 
 	_, err := tx.Run(ctx, query, map[string]any{
-		"rels": rels,
+		"rels": relsToMap(rels),
 	})
 
 	return err
 }
 
+// it is much faster than batchMergeRelationships Method
+func (w *Writer) batchMergeRelationshipsWithLabels(ctx context.Context, tx neo4j.ManagedTransaction, key relGroupKey, rels []extractor.Relationship) error {
+
+	query := fmt.Sprintf(`
+UNWIND $relationships AS r
+MATCH (a:%s {uid: r.source_uid})
+MATCH (b:%s {uid: r.target_uid})
+MERGE (a)-[rel:%s {uid: r.uid}]->(b)
+SET rel._lock = true
+WITH rel, r
+SET rel += r.properties,
+    rel.source_id = r.source_id,
+    rel.confidence = r.confidence,
+    rel.t_valid = r.t_valid,
+    rel.t_invalid = r.t_invalid,
+    rel.t_ingest = r.t_ingest
+REMOVE rel._lock
+`,
+		key.SourceLabel,
+		key.TargetLabel,
+		key.Type,
+	)
+
+	_, err := tx.Run(ctx, query, map[string]any{
+		"relationships": relsToMap(rels),
+	})
+
+	return err
+}
+
+//
+//====================HELPER FUNCTIONS====================
+//
 
 // groups Nodes based on Label for batch transaction
 func groupNodesByLabel(nodes []extractor.Node) map[string][]extractor.Node {
@@ -274,6 +310,74 @@ func groupRelationshipsByType(rels []extractor.Relationship) map[string][]extrac
 
 	for _, r := range rels {
 		out[r.Type] = append(out[r.Type], r)
+	}
+
+	return out
+}
+
+// nodesToMap flatten the MetaData (neo4j is not going to do it itself)
+func nodesToMap(nodes []extractor.Node) []map[string]any {
+	out := make([]map[string]any, 0, len(nodes))
+
+	for _, n := range nodes {
+		out = append(out, map[string]any{
+			"uid":        n.UID,
+			"name":       n.Name,
+			"properties": n.Properties,
+
+			"source_id":  n.Metadata.SourceID,
+			"confidence": n.Metadata.Confidence,
+			"t_valid":    n.Metadata.TValid,
+			"t_invalid":  n.Metadata.TInvalid,
+			"t_ingest":   n.Metadata.TIngest,
+		})
+	}
+
+	return out
+}
+
+type relGroupKey struct {
+	Type        string
+	SourceLabel string
+	TargetLabel string
+}
+
+// group the relations based on the Type + sourceLabel + TargetLabel
+// as the Neo4j is not suitable fro dynamic naming(i donno the name but its like $(r.source_label) is not allowed )
+func groupRelationshipsAdvanced(rels []extractor.Relationship) map[relGroupKey][]extractor.Relationship {
+
+	out := make(map[relGroupKey][]extractor.Relationship)
+
+	for _, r := range rels {
+		key := relGroupKey{
+			Type:        r.Type,
+			SourceLabel: r.SourceLabel,
+			TargetLabel: r.TargetLabel,
+		}
+		out[key] = append(out[key], r)
+	}
+
+	return out
+}
+
+func relsToMap(rels []extractor.Relationship) []map[string]any {
+	out := make([]map[string]any, 0, len(rels))
+
+	for _, r := range rels {
+		out = append(out, map[string]any{
+			"uid": r.UID,
+
+			"source_uid": r.SourceUID,
+			"target_uid": r.TargetUID,
+
+			"properties": r.Properties,
+
+			"source_id":  r.Metadata.SourceID,
+			"confidence": r.Metadata.Confidence,
+			"t_valid":    r.Metadata.TValid,
+			"t_invalid":  r.Metadata.TInvalid,
+			"t_ingest":   r.Metadata.TIngest,
+		})
 	}
 
 	return out

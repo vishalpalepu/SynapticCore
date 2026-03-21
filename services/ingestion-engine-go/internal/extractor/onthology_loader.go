@@ -24,6 +24,8 @@ type SchemaContract struct {
 	NodeDetails         string
 	RelationshipDetails string
 	MetadataDetails     string
+	AllowedLabels       map[string]bool // Pre-computed for speed
+	AllowedRels         map[string]bool // Pre-computed for speed
 }
 
 func LoadOnthology(path string) (*SchemaContract, error) {
@@ -64,5 +66,7 @@ func LoadOnthology(path string) (*SchemaContract, error) {
 		NodeDetails:         nodes.String(),
 		RelationshipDetails: rels.String(),
 		MetadataDetails:     meta.String(),
+		AllowedLabels:       parseAllowedItems(nodes.String()),
+		AllowedRels:         parseAllowedItems(rels.String()),
 	}, nil
 }

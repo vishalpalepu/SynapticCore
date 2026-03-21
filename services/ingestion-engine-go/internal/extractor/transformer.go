@@ -62,8 +62,7 @@ func (t *Transformer) ExtractChunk(ctx context.Context, chunk Chunk) (*GraphResu
 	return graph, nil
 }
 
-
-func (t *Transformer) ExtractChunkOptimized(ctx context.Context,chunk Chunk,) (*GraphResult, error) {
+func (t *Transformer) ExtractChunkOptimized(ctx context.Context, chunk Chunk) (*GraphResult, error) {
 
 	start := time.Now()
 
@@ -106,11 +105,11 @@ func (t *Transformer) ExtractChunkOptimized(ctx context.Context,chunk Chunk,) (*
 		return nil, fmt.Errorf("invalid JSON: %w", err)
 	}
 
-	// 4. Normalize + Build Graph
-	graph := normalizeExtraction(llmOut, chunk)
+	// 4. Normalize + Build Graph + relLabel(added)
+	graph := normalizeExtractionOptimized(&llmOut, chunk)
 
 	// 5. Validate
-	if err := validateGraph(graph, t.Schema); err != nil {
+	if err := validateExtraction(graph, t.Schema); err != nil {
 		return nil, err
 	}
 
@@ -217,26 +216,112 @@ func normalizeExtraction(out *LLMExtractionResult, chunk Chunk) *GraphResult {
 	}
 }
 
+// For Optimized relationship Query
+func normalizeExtractionOptimized(out *LLMExtractionResult, chunk Chunk) *GraphResult {
+	now := time.Now().UTC()
+	nodes := make([]Node, 0, len(out.Nodes))
+	// not using the nameToUID we can create the UID with the label and name itseld instead of the nodes UID
+
+	for _, n := range out.Nodes {
+		name := CanonicalName(n.Name)
+		label := SanitizeLabel(n.Label)
+
+		uid := MakeUID(label, name)
+
+		if n.Properties == nil {
+			n.Properties = map[string]any{}
+		}
+		n.Properties["canonical_name"] = name
+
+		node := Node{
+			Name:       name,
+			Label:      label,
+			UID:        uid,
+			Properties: n.Properties,
+			Metadata: Metadata{
+				UID:        uid,
+				SourceID:   chunk.ChunkID,
+				Confidence: clampConfidence(n.Metadata.Confidence),
+				TValid:     parseTimePtr(n.Metadata.TValid),
+				TInvalid:   parseTimePtr(n.Metadata.TInvalid),
+				TIngest:    now,
+			},
+		}
+		nodes = append(nodes, node)
+	}
+
+	rels := make([]Relationship, 0, len(out.Relationships))
+
+	for _, r := range out.Relationships {
+		srcName := CanonicalName(r.SourceName)
+		tarName := CanonicalName(r.TargetName)
+		srcLabel := SanitizeLabel(r.SourceLabel)
+		tarLabel := SanitizeLabel(r.TargetLabel)
+
+		srcUID := MakeUID(srcLabel, srcName)
+		tarUID := MakeUID(tarLabel, tarName)
+
+		if srcUID == "" || tarUID == "" {
+			continue
+		}
+
+		relType := SanitizeLabel(r.Type)
+		relBaseUID := srcUID + "|" + relType + "|" + tarUID
+		uid := MakeUID("relationship", relBaseUID)
+
+		if r.Properties == nil {
+			r.Properties = map[string]any{}
+		}
+
+		rels = append(rels, Relationship{
+			Type:        relType,
+			SourceName:  srcName,
+			TargetName:  tarName,
+			SourceUID:   srcUID,
+			TargetUID:   tarUID,
+			SourceLabel: srcLabel,
+			TargetLabel: tarLabel,
+			UID:         uid,
+			Properties:  r.Properties,
+			Metadata: Metadata{
+				UID:        uid,
+				SourceID:   chunk.ChunkID,
+				Confidence: clampConfidence(r.Metadata.Confidence),
+				TValid:     parseTimePtr(r.Metadata.TValid),
+				TInvalid:   parseTimePtr(r.Metadata.TInvalid),
+				TIngest:    now,
+			},
+		})
+	}
+
+	return &GraphResult{
+		Nodes:         nodes,
+		Relationships: rels,
+	}
+}
+
 func validateExtraction(graph *GraphResult, schema *SchemaContract) error {
-	allowedLabels := parseAllowedItems(schema.NodeDetails)
-	allowedRels := parseAllowedItems(schema.RelationshipDetails)
 
 	for _, n := range graph.Nodes {
 		if n.Name == "" || n.Label == "" {
-			return fmt.Errorf("node missing node or label")
+			return fmt.Errorf("node identity failure: missing name or label")
 		}
-		if len(allowedLabels) > 0 && !allowedLabels[n.Label] {
-			return fmt.Errorf("invalid Node label %s", n.Label)
+		if !schema.AllowedLabels[n.Label] {
+			return fmt.Errorf("ontological breach: invalid node label '%s'", n.Label)
 		}
 	}
 
 	for _, r := range graph.Relationships {
 		if r.Type == "" || r.SourceUID == "" || r.TargetUID == "" {
-			return fmt.Errorf("invalid relationship")
+			return fmt.Errorf("triple corruption: missing type or endpoints")
 		}
 
-		if len(allowedRels) > 0 && !allowedRels[r.Type] {
-			return fmt.Errorf("invalid relationship type %s", r.Type)
+		if !schema.AllowedRels[r.Type] {
+			return fmt.Errorf("ontological breach: invalid relationship type '%s'", r.Type)
+		}
+
+		if r.SourceLabel == "" || r.TargetLabel == "" {
+			return fmt.Errorf("index failure: relationship missing endpoint labels for UID %s", r.UID)
 		}
 	}
 
@@ -267,7 +352,8 @@ func parseAllowedItems(block string) map[string]bool {
 
 func clampConfidence(c float64) float64 {
 	if c < 0 || c > 1 {
-		return 0.5
+		return 0.0 // follow the contract strictly
+
 	}
 	return c
 }

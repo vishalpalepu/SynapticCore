@@ -22,7 +22,9 @@ type LLMNode struct {
 type LLMRelationship struct {
 	Type       string                 `json:"type"`
 	SourceName string                 `json:"source_name"`
+	SourceLabel string `json:"source_label"`
 	TargetName string                 `json:"target_name"`
+	TargetLabel string `json:"target_label"`
 	Properties map[string]interface{} `json:"properties,omitempty"`
 	Metadata   LLMMetadata            `json:"metadata"`
 }
@@ -56,9 +58,11 @@ type Node struct {
 type Relationship struct {
 	Type       string                 `json:"type"`
 	SourceName string                 `json:"source_name"`
-	TargetName string                 `json:"target_name"`
 	SourceUID  string                 `json:"source_uid"`
+	SourceLabel string `json:"source_label"`
+	TargetName string                 `json:"target_name"`
 	TargetUID  string                 `json:"target_uid"`
+	TargetLabel string `json:"target_label"`
 	UID        string                 `json:"uid"`
 	Properties map[string]interface{} `json:"properties"`
 	Metadata   Metadata               `json:"metadata"`
