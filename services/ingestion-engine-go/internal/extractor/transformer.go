@@ -28,7 +28,7 @@ type Transformer struct {
 
 func (t *Transformer) ExtractChunk(ctx context.Context, chunk Chunk) (*GraphResult, error) {
 	if t.Limiter != nil {
-		if err := t.Limiter.Acquire(ctx); err == nil {
+		if err := t.Limiter.Acquire(ctx); err != nil {
 			return nil, err
 		}
 	}
