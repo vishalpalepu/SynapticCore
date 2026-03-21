@@ -62,6 +62,70 @@ func (t *Transformer) ExtractChunk(ctx context.Context, chunk Chunk) (*GraphResu
 	return graph, nil
 }
 
+
+func (t *Transformer) ExtractChunkOptimized(ctx context.Context,chunk Chunk,) (*GraphResult, error) {
+
+	start := time.Now()
+
+	// 1. Rate limit
+	if t.Limiter != nil {
+		if err := t.Limiter.Acquire(ctx); err != nil {
+			return nil, err
+		}
+	}
+
+	systemPrompt := BuildSystemPrompt(t.Schema)
+	userPrompt := fmt.Sprintf(
+		"Extract graph data.\n\nChunkID: %s\nDocID: %s\n\nText:\n%s",
+		chunk.ChunkID,
+		chunk.DocID,
+		chunk.Text,
+	)
+
+	// 2. Retry logic (LLM is unreliable)
+	// this the update we retry to call the LLM three times then give up if error occures we wait 500ms then 1000ms then 1500ms each call
+	var raw string
+	var err error
+
+	for i := 0; i < 3; i++ {
+		raw, err = t.Client.Extract(ctx, systemPrompt, userPrompt)
+		if err == nil {
+			break
+		}
+		time.Sleep(time.Duration(i+1) * 500 * time.Millisecond)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("llm failed after retries: %w", err)
+	}
+
+	raw = cleanLLMOutput(raw)
+
+	// 3. Parse
+	var llmOut LLMExtractionResult
+	if err := json.Unmarshal([]byte(raw), &llmOut); err != nil {
+		return nil, fmt.Errorf("invalid JSON: %w", err)
+	}
+
+	// 4. Normalize + Build Graph
+	graph := normalizeExtraction(llmOut, chunk)
+
+	// 5. Validate
+	if err := validateGraph(graph, t.Schema); err != nil {
+		return nil, err
+	}
+
+	// 6. Observability (VERY IMPORTANT)
+	duration := time.Since(start)
+	fmt.Printf("Chunk %s processed in %v (nodes=%d rels=%d)\n",
+		chunk.ChunkID,
+		duration,
+		len(graph.Nodes),
+		len(graph.Relationships),
+	)
+
+	return graph, nil
+}
+
 func cleanLLMOutput(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.TrimPrefix(s, "```json") // is LLM return the json in .md + json code format
