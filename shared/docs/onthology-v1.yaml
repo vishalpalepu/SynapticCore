@@ -1,0 +1,65 @@
+# SynapticCore Ontology v1.0
+# Global Schema Contract for Polyglot Microservices
+# Reference this for Go Extraction logic and Python Reasoning tools
+
+version: "1.0"
+
+# 1. Global Metadata (The 'Provenance & Temporal' Block)
+# Every Node and Relationship MUST carry these fields.
+metadata_schema:
+  uid: "string (Deterministic hash of primary identifier + type)"
+  source_id: "string (URI/ID of the raw data chunk/document)"
+  confidence: "float (0.0 - 1.0, LLM-assigned extraction certainty)"
+  t_valid: "ISO8601 (When the fact became true in the real world) [1]"
+  t_invalid: "ISO8601 | null (When the fact ceased to be true) [1]"
+  t_ingest: "ISO8601 (System timestamp of record creation)"
+
+# 2. Node Definitions
+# we limit to 4 to avoid "label Explosion" and maintain clarity in relationships.
+nodes:
+  Entity:
+    description: "A concrete or abstract 'Thing' (Person, Org, Object, Place)"
+    fields:
+      name: "string (The canonical name)"
+      type_label: "string (Sub-type like 'Surgeon', 'Microservice', 'Project')"
+      description: "text (LLM-generated summary of the entity)"
+      attributes: "map (Domain-specific key-values: e.g., 'version', 'location')"
+  Event:
+    description: "An occurrence at a point in time (Meeting, Error, Transaction)"
+    fields:
+      event_name: "string (The canonical name of the event)"
+      status: "string (e.g., 'Scheduled', 'Completed', 'Failed')"
+      start_time: "ISO8601 (When the event starts)"
+      end_time: "ISO8601 (When the event ends)"
+  Concept:
+    description: "Abstract knowledge, rules, or categories (Biomarkers, Policies)"
+    fields:
+      term: "string (The canonical term)"
+      definition: "text (LLM-generated definition or explanation)"
+      domain_context: "string (e.g., 'Legal', 'IT_Security')"
+  Instruction:
+    description: "Procedural memory: How to perform a task or a past decision trace"
+    fields:
+      objective: "string (The goal or task this instruction achieves)"
+      parameters: "map (Input values for the tool/task)"
+      steps: "list (Ordered list of procedural steps or decision points)"
+      outcome: "string (The result or expected outcome of following the instruction)"
+      performed_by: "string (Identifier of the agent or system that performed the instruction, if applicable)"
+
+# 3. Relationship Grammar (Universal Connectors)
+# Standardized verbs enable efficient multi-hop traversal
+relationships:
+  PART_OF: "Structural hierarchy (e.g., Pod -> PART_OF -> Cluster)"
+  ASSOCIATED_WITH: "General semantic link (e.g., Symptom -> ASSOCIATED_WITH -> Disease)"
+  DEPENDS_ON: "Functional requirement (e.g., API -> DEPENDS_ON -> Auth_Service)"
+  TRIGGERED_BY: "Causal sequence (e.g., Alert -> TRIGGERED_BY -> Latency_Spike)"
+  PERFORMED_BY: "Action attribution (e.g., Task -> PERFORMED_BY -> Agent_01)"
+  MENTIONED_IN: "Direct link to source chunk for grounding [4]"
+
+# 4. Global Constraints
+# Enforced at the Neo4j Database level to prevent data corruption [5]
+database_constraints:
+  - "CREATE CONSTRAINT FOR (n:Entity) REQUIRE n.uid IS UNIQUE"
+  - "CREATE CONSTRAINT FOR (n:Event) REQUIRE n.uid IS UNIQUE"
+  - "CREATE INDEX FOR (n:Entity) ON (n.name)"
+  - "CREATE INDEX FOR (n:Entity) ON (n.type_label)"

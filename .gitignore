@@ -1,0 +1,82 @@
+# =========================
+# OS / Editor
+# =========================
+.DS_Store
+Thumbs.db
+
+# VSCode
+.vscode/
+*.code-workspace
+
+# =========================
+# Environment files
+# =========================
+.env
+*.env
+!.env.example
+
+# =========================
+# Python (reasoning-api-python)
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Virtual env
+venv/
+.env/
+.venv/
+
+# Python build
+build/
+dist/
+*.egg-info/
+
+# =========================
+# Go (ingestion-engine-go)
+# =========================
+bin/
+pkg/
+*.exe
+*.out
+*.test
+
+# Go build cache
+go.work.sum
+
+# =========================
+# Neo4j
+# =========================
+infrastructure/neo4j/data/
+infrastructure/neo4j/logs/
+infrastructure/neo4j/plugins/
+
+# (keep import if you use seed data; otherwise ignore)
+# infrastructure/neo4j/import/
+
+# =========================
+# Logs
+# =========================
+*.log
+logs/
+
+# =========================
+# Docker
+# =========================
+docker-compose.override.yml
+
+# =========================
+# Misc
+# =========================
+tmp/
+temp/
+.cache/
+
+# =========================
+# Secrets / configs
+# =========================
+*.key
+*.pem
+*.crt
