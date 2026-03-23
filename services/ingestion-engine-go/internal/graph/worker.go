@@ -3,7 +3,7 @@ package graph
 import (
 	"context"
 	"fmt"
-	"services/ingestion-engine-go/services/ingestion-engine-go/internal/extractor"
+	"ingestion-engine-go/internal/extractor"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
@@ -86,10 +86,10 @@ func (w *Writer) WriteExtractionOptimized(ctx context.Context, docID string, chu
 func (w *Writer) writeChunk(ctx context.Context, tx neo4j.ManagedTransaction, docID string, chunk extractor.Chunk) error {
 
 	query := `
-MERGE (d:document {uid:$doc_uid})
+MERGE (d:Document {uid:$doc_uid})
 SET d.id = $doc_id
 
-MERGE (c:chunk {uid : $chunk_uid})
+MERGE (c:Chunk {uid : $chunk_uid})
 SET c.text =  $text,
 	c.index = $idx,
 	c.parent_uid = $parent_uid,
