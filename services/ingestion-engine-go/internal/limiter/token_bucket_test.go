@@ -1,14 +1,14 @@
-package main
+package limiter_test
 
 import (
-	"fmt"
 	"context"
-	"time"
+	"fmt"
 	"ingestion-engine-go/internal/limiter"
+	"testing"
+	"time"
 )
 
-
-func main() {
+func TestTokenBucketThroughput(t *testing.T) {
 	fmt.Println("Starting Token Bucket Throughput Test...")
 
 	// capacity = 10 tokens
