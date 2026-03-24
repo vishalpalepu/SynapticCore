@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"ingestion-engine-go/internal/extractor"
+	"log"
+	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
 type Writer struct {
 	Driver neo4j.DriverWithContext
+	Logger *log.Logger
 }
 
 //
@@ -55,6 +58,15 @@ func (w *Writer) WriteExtractionOptimized(ctx context.Context, docID string, chu
 	defer session.Close(ctx)
 
 	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		start := time.Now()
+		if w.Logger != nil {
+			w.Logger.Printf("START ingestion doc=%s chunk=%s nodes=%d rels=%d",
+				docID,
+				chunk.ChunkID,
+				len(result.Nodes),
+				len(result.Relationships),
+			)
+		}
 
 		if err := w.writeChunk(ctx, tx, docID, chunk); err != nil {
 			return nil, err
@@ -64,7 +76,13 @@ func (w *Writer) WriteExtractionOptimized(ctx context.Context, docID string, chu
 		groupedNodes := groupNodesByLabel(result.Nodes)
 
 		for label, nodes := range groupedNodes {
+			if w.Logger != nil {
+				w.Logger.Printf("Batch Nodes label=%s size=%d", label, len(nodes))
+			}
 			if err := w.batchMergeNodesByLabel(ctx, tx, label, nodes); err != nil {
+				if w.Logger != nil {
+					w.Logger.Printf("Batch Nodes label=%s size=%d", label, len(nodes))
+				}
 				return nil, err
 			}
 		}
@@ -72,9 +90,23 @@ func (w *Writer) WriteExtractionOptimized(ctx context.Context, docID string, chu
 		groupedRels := groupRelationshipsAdvanced(result.Relationships)
 
 		for key, rels := range groupedRels {
+			if w.Logger != nil {
+				w.Logger.Printf("Batch Rels type=%s size=%d", key.Type, len(rels))
+			}
 			if err := w.batchMergeRelationshipsWithLabels(ctx, tx, key, rels); err != nil {
+				if w.Logger != nil {
+					w.Logger.Printf("Batch Rels type=%s size=%d", key.Type, len(rels))
+				}
 				return nil, err
 			}
+		}
+
+		if w.Logger != nil {
+			w.Logger.Printf("END ingestion doc=%s chunk=%s duration=%s",
+				docID,
+				chunk.ChunkID,
+				time.Since(start),
+			)
 		}
 		return nil, nil
 	})
@@ -117,8 +149,8 @@ MERGE (d)-[:HAS_CHUNK]->(c)
 		prevChunkId := fmt.Sprintf("%s-chunk-%d", docID, chunk.Index-1)
 
 		nextQuery := `
-MATCH (prev:chunk {uid : $prev_uid})
-MATCH (curr:chunk {uid :$curr_uid})
+MATCH (prev:Chunk {uid : $prev_uid})
+MATCH (curr:Chunk {uid :$curr_uid})
 MERGE (prev)-[:NEXT_CHUNK]->(curr)
 `
 
@@ -128,6 +160,8 @@ MERGE (prev)-[:NEXT_CHUNK]->(curr)
 		})
 
 		if err != nil {
+			w.Logger.Printf("ERROR writeChunk doc=%s chunk=%s err=%v",
+				docID, chunk.ChunkID, err)
 			return err
 		}
 	}
@@ -194,7 +228,6 @@ REMOVE x._lock
 	_, err := tx.Run(ctx, query, map[string]any{
 		"nodes": nodesToMap(nodes),
 	})
-
 	return err
 }
 

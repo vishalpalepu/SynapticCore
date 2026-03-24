@@ -4,6 +4,8 @@ import (
 	"context"
 	"ingestion-engine-go/internal/extractor"
 	"ingestion-engine-go/internal/graph"
+	"log"
+	"os"
 	"testing"
 	"time"
 
@@ -21,8 +23,8 @@ func TestManualIngestion(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer driver.Close(ctx)
-
-	writer := &graph.Writer{Driver: driver}
+	logger := log.New(os.Stdout, "[INGEST] ", log.LstdFlags)
+	writer := &graph.Writer{Driver: driver, Logger: logger}
 
 	// ---- Chunk ----
 	chunk := extractor.Chunk{
