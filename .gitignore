@@ -61,6 +61,8 @@ infrastructure/neo4j/plugins/
 # =========================
 *.log
 logs/
+*.pdf
+*.docx
 
 # =========================
 # Docker
