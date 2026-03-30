@@ -20,13 +20,13 @@ type LLMNode struct {
 
 // Relationship from LLM no UID(i will generate it) (uses names to connect to node not UID)
 type LLMRelationship struct {
-	Type       string                 `json:"type"`
-	SourceName string                 `json:"source_name"`
-	SourceLabel string `json:"source_label"`
-	TargetName string                 `json:"target_name"`
-	TargetLabel string `json:"target_label"`
-	Properties map[string]interface{} `json:"properties,omitempty"`
-	Metadata   LLMMetadata            `json:"metadata"`
+	Type        string                 `json:"type"`
+	SourceName  string                 `json:"source_name"`
+	SourceLabel string                 `json:"source_label"`
+	TargetName  string                 `json:"target_name"`
+	TargetLabel string                 `json:"target_label"`
+	Properties  map[string]interface{} `json:"properties,omitempty"`
+	Metadata    LLMMetadata            `json:"metadata"`
 }
 
 type LLMExtractionResult struct {
@@ -56,16 +56,16 @@ type Node struct {
 
 //Final Relationship (UID based linking)
 type Relationship struct {
-	Type       string                 `json:"type"`
-	SourceName string                 `json:"source_name"`
-	SourceUID  string                 `json:"source_uid"`
-	SourceLabel string `json:"source_label"`
-	TargetName string                 `json:"target_name"`
-	TargetUID  string                 `json:"target_uid"`
-	TargetLabel string `json:"target_label"`
-	UID        string                 `json:"uid"`
-	Properties map[string]interface{} `json:"properties"`
-	Metadata   Metadata               `json:"metadata"`
+	Type        string                 `json:"type"`
+	SourceName  string                 `json:"source_name"`
+	SourceUID   string                 `json:"source_uid"`
+	SourceLabel string                 `json:"source_label"`
+	TargetName  string                 `json:"target_name"`
+	TargetUID   string                 `json:"target_uid"`
+	TargetLabel string                 `json:"target_label"`
+	UID         string                 `json:"uid"`
+	Properties  map[string]interface{} `json:"properties"`
+	Metadata    Metadata               `json:"metadata"`
 }
 
 // Final Graph Result
@@ -82,4 +82,12 @@ type Chunk struct {
 	Index      int
 	Text       string
 	TokenCount int
+}
+
+type DocumentPackage struct {
+	DocID         string         `json:"doc_id"`
+	Chunks        []Chunk        `json:"chunks"`
+	Nodes         []Node         `json:"nodes"`
+	Relationships []Relationship `json:"relationships"`
+	TIngest       time.Time      `json:"t_ingest"`
 }

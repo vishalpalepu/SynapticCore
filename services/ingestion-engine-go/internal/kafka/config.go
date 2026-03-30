@@ -10,38 +10,36 @@ import (
 )
 
 type Config struct {
-	Brokers         []string
-	IngestionTopic  string
-	ConsumerGroupID string
-	Dialer          *kafka.Dialer
+	Brokers            []string
+	RawTopic           string
+	ExtractedTopic     string
+	ConsumerGroupRaw   string
+	ConsumerGroupGraph string
+	Dialer             *kafka.Dialer
 }
 
 func getEnv(key string) string {
 	val := os.Getenv(key)
 	if val == "" {
-		log.Fatalf("Environment variable %s is not set", key)
+		log.Fatalf("missing required env variable: %s", key)
 	}
 	return val
 }
 
 func LoadConfig() *Config {
-	brokersEnv := getEnv("KAFKA_BROKERS")
-	topic := getEnv("INGESTION_TOPIC")
-	groupID := getEnv("CONSUMER_GROUP_ID")
-
-	brokers := strings.Split(brokersEnv, ",")
+	brokers := strings.Split(getEnv("KAFKA_BROKERS"), ",")
 
 	dialer := &kafka.Dialer{
 		Timeout:   10 * time.Second,
 		DualStack: true,
 	}
 
-	cfg := &Config{
-		Brokers:         brokers,
-		IngestionTopic:  topic,
-		ConsumerGroupID: groupID,
-		Dialer:          dialer,
+	return &Config{
+		Brokers:            brokers,
+		RawTopic:           getEnv("RAW_TOPIC"),
+		ExtractedTopic:     getEnv("EXTRACTED_TOPIC"),
+		ConsumerGroupRaw:   getEnv("RAW_CONSUMER_GROUP"),
+		ConsumerGroupGraph: getEnv("GRAPH_CONSUMER_GROUP"),
+		Dialer:             dialer,
 	}
-
-	return cfg
 }
