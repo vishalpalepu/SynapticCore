@@ -50,7 +50,7 @@ func (w *Writer) initializeSchema(ctx context.Context) error {
 		"CREATE CONSTRAINT chunk_uid IF NOT EXISTS FOR (n:Chunk) REQUIRE n.uid IS UNIQUE",
 
 		"CREATE INDEX entity_name_idx IF NOT EXISTS FOR (n:Entity) ON (n.name)",
-		"CREATE INDEX concept_term_idx IF NOT EXISTS FOR (n:Concept) ON (n.term)",
+		"CREATE INDEX concept_term_idx IF NOT EXISTS FOR (n:Concept) ON (n.name)",
 		"CREATE INDEX chunk_doc_uid_idx IF NOT EXISTS FOR (n:Chunk) ON (n.doc_uid)",
 	}
 

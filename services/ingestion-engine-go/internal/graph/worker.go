@@ -15,41 +15,8 @@ type Writer struct {
 	Logger *log.Logger
 }
 
-//
-// =========== WRAPPER FOR HAVING A ROLLBACK IN CASE OF ERROR+= TO SUPPORT TRANSACTIONAL INTEGRITY (to incase anyone fails everything is rolled back) ==================
-//
-
-func (w *Writer) WriteExtraction(ctx context.Context, docID string, chunk extractor.Chunk, result *extractor.GraphResult) error {
-
-	session := w.Driver.NewSession(ctx, neo4j.SessionConfig{
-		AccessMode: neo4j.AccessModeWrite,
-	})
-	defer session.Close(ctx)
-
-	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-
-		if err := w.writeChunk(ctx, tx, docID, chunk); err != nil {
-			return nil, err
-		}
-
-		for _, n := range result.Nodes {
-			if err := w.mergeNode(ctx, tx, n); err != nil {
-				return nil, err
-			}
-		}
-
-		for _, r := range result.Relationships {
-			if err := w.mergeRelationship(ctx, tx, r); err != nil {
-				return nil, err
-			}
-		}
-
-		return nil, nil
-	})
-
-	return err
-}
-
+// WRAPPER FOR HAVING A ROLLBACK IN CASE OF ERROR
+// TO SUPPORT TRANSACTIONAL INTEGRITY (to incase anyone fails everything is rolled back)
 func (w *Writer) WriteExtractionOptimized(ctx context.Context, docID string, chunk extractor.Chunk, result *extractor.GraphResult) error {
 
 	session := w.Driver.NewSession(ctx, neo4j.SessionConfig{
@@ -114,7 +81,7 @@ func (w *Writer) WriteExtractionOptimized(ctx context.Context, docID string, chu
 	return err
 }
 
-// ====== To Write the user data into Neo4j(actual data) ===========
+// To Write the user data into Neo4j(actual data)
 func (w *Writer) writeChunk(ctx context.Context, tx neo4j.ManagedTransaction, docID string, chunk extractor.Chunk) error {
 
 	query := `
@@ -169,44 +136,8 @@ MERGE (prev)-[:NEXT_CHUNK]->(curr)
 	return nil
 }
 
-//
-//============= MERGE THE NODES =================
-//
-
-// this mergeNode does a DB call for each Node but the Kafka will send the data in huge size which will cost a lot of latency
-// also not applied the locks aswell
-// created new methods for Writer to be able to solve these problems below
-func (w *Writer) mergeNode(ctx context.Context, tx neo4j.ManagedTransaction, n extractor.Node) error {
-	query := fmt.Sprintf(`
-MERGE (x:%s {uid: $uid})
-SET x.name = $name,
-    x += $props,
-    x.source_id = $source_id,
-    x.confidence = $confidence,
-    x.t_valid = $t_valid,
-    x.t_invalid = $t_invalid,
-    x.t_ingest = $t_ingest
-`, n.Label)
-
-	_, err := tx.Run(ctx, query, map[string]any{
-		"uid":        n.UID,
-		"name":       n.Name,
-		"props":      n.Properties,
-		"source_id":  n.Metadata.SourceID,
-		"confidence": n.Metadata.Confidence,
-		"t_valid":    n.Metadata.TValid,
-		"t_invalid":  n.Metadata.TInvalid,
-		"t_ingest":   n.Metadata.TIngest,
-	})
-
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
 // BATCH NODE MERGE (UNWIND + LOCK)
+
 // what it does is based on a single label multiple Nodes will be created ans shown below and x._lock is for atomicity
 // to avoid race conditions
 func (w *Writer) batchMergeNodesByLabel(ctx context.Context, tx neo4j.ManagedTransaction, label string, nodes []extractor.Node) error {
@@ -228,67 +159,6 @@ REMOVE x._lock
 	_, err := tx.Run(ctx, query, map[string]any{
 		"nodes": nodesToMap(nodes),
 	})
-	return err
-}
-
-//
-//====================== MERGE RELATIONSHIP ========================
-
-// this create relationship one by one which make a lot of DB calls to avoid we can perform batch tarnsactions
-func (w *Writer) mergeRelationship(ctx context.Context, tx neo4j.ManagedTransaction, r extractor.Relationship) error {
-
-	query := fmt.Sprintf(`
-MATCH (a {uid: $source_uid})
-MATCH (b {uid: $target_uid})
-MERGE (a)-[rel:%s {uid: $uid}]->(b)
-SET rel += $props,
-    rel.source_id = $source_id,
-    rel.confidence = $confidence,
-    rel.t_valid = $t_valid,
-    rel.t_invalid = $t_invalid,
-    rel.t_ingest = $t_ingest
-`, r.Type)
-
-	_, err := tx.Run(ctx, query, map[string]any{
-		"uid":        r.UID,
-		"source_uid": r.SourceUID,
-		"target_uid": r.TargetUID,
-		"props":      r.Properties,
-		"source_id":  r.Metadata.SourceID,
-		"confidence": r.Metadata.Confidence,
-		"t_valid":    r.Metadata.TValid,
-		"t_invalid":  r.Metadata.TInvalid,
-		"t_ingest":   r.Metadata.TIngest,
-	})
-
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// much faster than mergeRelationship slower than batchMergeRelationshipsWithLabels
-func (w *Writer) batchMergeRelationships(ctx context.Context, tx neo4j.ManagedTransaction, relType string, rels []extractor.Relationship) error {
-
-	query := fmt.Sprintf(`
-UNWIND $rels AS r
-MATCH (a:$(r.source_label) {uid: r.source_uid})
-MATCH (b:$(r.target_label) {uid: r.target_uid})
-MERGE (a)-[rel:%s {uid: r.uid}]->(b)
-SET rel._lock = true // Manual write lock to prevent Lost Updates
-WITH rel, r
-SET rel += r.properties,
-    rel.source_id = r.source_id,
-    rel.confidence = r.confidence,
-    rel.t_valid = r.t_valid,
-    rel.t_ingest = datetime()
-REMOVE rel._lock`, relType)
-
-	_, err := tx.Run(ctx, query, map[string]any{
-		"rels": relsToMap(rels),
-	})
-
 	return err
 }
 
@@ -320,32 +190,6 @@ REMOVE rel._lock
 	})
 
 	return err
-}
-
-//
-//====================HELPER FUNCTIONS====================
-//
-
-// groups Nodes based on Label for batch transaction
-func groupNodesByLabel(nodes []extractor.Node) map[string][]extractor.Node {
-	out := make(map[string][]extractor.Node)
-
-	for _, n := range nodes {
-		out[n.Label] = append(out[n.Label], n)
-	}
-
-	return out
-}
-
-// groups relationships based on the types
-func groupRelationshipsByType(rels []extractor.Relationship) map[string][]extractor.Relationship {
-	out := make(map[string][]extractor.Relationship)
-
-	for _, r := range rels {
-		out[r.Type] = append(out[r.Type], r)
-	}
-
-	return out
 }
 
 // nodesToMap flatten the MetaData (neo4j is not going to do it itself)
@@ -411,6 +255,152 @@ func relsToMap(rels []extractor.Relationship) []map[string]any {
 			"t_invalid":  r.Metadata.TInvalid,
 			"t_ingest":   r.Metadata.TIngest,
 		})
+	}
+
+	return out
+}
+
+//====================NO USE FUNCTIONS =======================
+
+func (w *Writer) WriteExtraction(ctx context.Context, docID string, chunk extractor.Chunk, result *extractor.GraphResult) error {
+
+	session := w.Driver.NewSession(ctx, neo4j.SessionConfig{
+		AccessMode: neo4j.AccessModeWrite,
+	})
+	defer session.Close(ctx)
+
+	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+
+		if err := w.writeChunk(ctx, tx, docID, chunk); err != nil {
+			return nil, err
+		}
+
+		for _, n := range result.Nodes {
+			if err := w.mergeNode(ctx, tx, n); err != nil {
+				return nil, err
+			}
+		}
+
+		for _, r := range result.Relationships {
+			if err := w.mergeRelationship(ctx, tx, r); err != nil {
+				return nil, err
+			}
+		}
+
+		return nil, nil
+	})
+
+	return err
+}
+
+// this mergeNode does a DB call for each Node but the Kafka will send the data in huge size which will cost a lot of latency
+// also not applied the locks aswell
+// created new methods for Writer to be able to solve these problems below
+func (w *Writer) mergeNode(ctx context.Context, tx neo4j.ManagedTransaction, n extractor.Node) error {
+	query := fmt.Sprintf(`
+MERGE (x:%s {uid: $uid})
+SET x.name = $name,
+    x += $props,
+    x.source_id = $source_id,
+    x.confidence = $confidence,
+    x.t_valid = $t_valid,
+    x.t_invalid = $t_invalid,
+    x.t_ingest = $t_ingest
+`, n.Label)
+
+	_, err := tx.Run(ctx, query, map[string]any{
+		"uid":        n.UID,
+		"name":       n.Name,
+		"props":      n.Properties,
+		"source_id":  n.Metadata.SourceID,
+		"confidence": n.Metadata.Confidence,
+		"t_valid":    n.Metadata.TValid,
+		"t_invalid":  n.Metadata.TInvalid,
+		"t_ingest":   n.Metadata.TIngest,
+	})
+
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// this create relationship one by one which make a lot of DB calls to avoid we can perform batch tarnsactions
+func (w *Writer) mergeRelationship(ctx context.Context, tx neo4j.ManagedTransaction, r extractor.Relationship) error {
+
+	query := fmt.Sprintf(`
+MATCH (a {uid: $source_uid})
+MATCH (b {uid: $target_uid})
+MERGE (a)-[rel:%s {uid: $uid}]->(b)
+SET rel += $props,
+    rel.source_id = $source_id,
+    rel.confidence = $confidence,
+    rel.t_valid = $t_valid,
+    rel.t_invalid = $t_invalid,
+    rel.t_ingest = $t_ingest
+`, r.Type)
+
+	_, err := tx.Run(ctx, query, map[string]any{
+		"uid":        r.UID,
+		"source_uid": r.SourceUID,
+		"target_uid": r.TargetUID,
+		"props":      r.Properties,
+		"source_id":  r.Metadata.SourceID,
+		"confidence": r.Metadata.Confidence,
+		"t_valid":    r.Metadata.TValid,
+		"t_invalid":  r.Metadata.TInvalid,
+		"t_ingest":   r.Metadata.TIngest,
+	})
+
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// much faster than mergeRelationship slower than batchMergeRelationshipsWithLabels
+func (w *Writer) batchMergeRelationships(ctx context.Context, tx neo4j.ManagedTransaction, relType string, rels []extractor.Relationship) error {
+
+	query := fmt.Sprintf(`
+UNWIND $rels AS r
+MATCH (a:$(r.source_label) {uid: r.source_uid})
+MATCH (b:$(r.target_label) {uid: r.target_uid})
+MERGE (a)-[rel:%s {uid: r.uid}]->(b)
+SET rel._lock = true // Manual write lock to prevent Lost Updates
+WITH rel, r
+SET rel += r.properties,
+    rel.source_id = r.source_id,
+    rel.confidence = r.confidence,
+    rel.t_valid = r.t_valid,
+    rel.t_ingest = datetime()
+REMOVE rel._lock`, relType)
+
+	_, err := tx.Run(ctx, query, map[string]any{
+		"rels": relsToMap(rels),
+	})
+
+	return err
+}
+
+// groups Nodes based on Label for batch transaction
+func groupNodesByLabel(nodes []extractor.Node) map[string][]extractor.Node {
+	out := make(map[string][]extractor.Node)
+
+	for _, n := range nodes {
+		out[n.Label] = append(out[n.Label], n)
+	}
+
+	return out
+}
+
+// groups relationships based on the types
+func groupRelationshipsByType(rels []extractor.Relationship) map[string][]extractor.Relationship {
+	out := make(map[string][]extractor.Relationship)
+
+	for _, r := range rels {
+		out[r.Type] = append(out[r.Type], r)
 	}
 
 	return out
