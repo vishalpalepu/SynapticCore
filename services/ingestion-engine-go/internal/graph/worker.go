@@ -21,6 +21,141 @@ type Writer struct {
 
 // NEW APPROACH IS TO SEND THE DATA IN BATCHES (LIKE 10 CHUNKS WITH THEIR NODES AND RELS)
 
+func (w *Writer) WriteDocumentPackage(ctx context.Context, pkg extractor.DocumentPackage) error {
+	session := w.Driver.NewSession(ctx, neo4j.SessionConfig{
+		AccessMode: neo4j.AccessModeWrite,
+	})
+	defer session.Close(ctx)
+
+	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		start := time.Now()
+		if w.Logger != nil {
+			w.Logger.Printf("START ingestion doc=%s chunks=%d nodes=%d rels=%d",
+				pkg.DocID,
+				len(pkg.Chunks),
+				len(pkg.Nodes),
+				len(pkg.Relationships),
+			)
+		}
+
+		if err := w.batchWriteChunks(ctx, tx, pkg.DocID, pkg.Chunks); err != nil {
+			if w.Logger != nil {
+				w.Logger.Printf("Error writing chunks doc=%s err=%v", pkg.DocID, err)
+			}
+			return nil, err
+		}
+
+		groupedNodes := groupNodesByLabel(pkg.Nodes)
+
+		for label, nodes := range groupedNodes {
+			if w.Logger != nil {
+				w.Logger.Printf("Batch Nodes label=%s size=%d", label, len(nodes))
+			}
+			if err := w.batchMergeNodesByLabel(ctx, tx, label, nodes); err != nil {
+				if w.Logger != nil {
+					w.Logger.Printf("Error merging nodes label=%s size=%d", label, len(nodes))
+				}
+				return nil, err
+			}
+		}
+
+		groupedRels := groupRelationshipsAdvanced(pkg.Relationships)
+
+		for key, rels := range groupedRels {
+			if w.Logger != nil {
+				w.Logger.Printf("Batch Rels type=%s size=%d", key.Type, len(rels))
+			}
+
+			if err := w.batchMergeRelationshipsWithLabels(ctx, tx, key, rels); err != nil {
+				if w.Logger != nil {
+					w.Logger.Printf("Error merging relationships type=%s size=%d", key.Type, len(rels))
+				}
+				return nil, err
+			}
+		}
+
+		if w.Logger != nil {
+			w.Logger.Printf("END ingestion doc=%s duration=%s",
+				pkg.DocID,
+				time.Since(start),
+			)
+		}
+
+		return nil, nil
+	})
+	return err
+}
+
+func (w *Writer) batchWriteChunks(ctx context.Context, tx neo4j.ManagedTransaction, docID string, chunks []extractor.Chunk) error {
+
+	query := `
+MERGE (d:Document {uid:$doc_uid})
+SET d.id = $doc_id
+
+WITH d
+UNWIND $chunks AS c
+
+MERGE (chunk:Chunk {uid: c.chunk_id})
+SET chunk.text = c.text,
+	chunk.index = c.index,
+	chunk.parent_uid = c.parent_uid,
+	chunk.doc_uid = c.doc_uid,
+	chunk.token_count = c.token_count,
+	chunk.updated_at = datetime()
+	
+MERGE (d)-[:HAS_CHUNK]->(chunk)
+`
+	_, err := tx.Run(ctx, query, map[string]any{
+		"doc_uid": extractor.MakeUID("Document", docID),
+		"doc_id":  docID,
+		"chunks":  chunksToMap(docID, chunks),
+	})
+
+	if err != nil {
+		return err
+	}
+
+	linkQuery := `
+UNWIND $links AS l 
+MATCH (prev:Chunk {uid : l.from})
+MATCH (curr:Chunk {uid : l.to})
+MERGE (prev)-[:NEXT_CHUNK]->(curr)
+`
+	_, err = tx.Run(ctx, linkQuery, map[string]any{
+		"links": batchChunkLinks(chunks),
+	})
+
+	return err
+}
+
+func chunksToMap(docID string, chunks []extractor.Chunk) []map[string]any {
+	out := make([]map[string]any, 0, len(chunks))
+
+	for _, c := range chunks {
+		out = append(out, map[string]any{
+			"chunk_id":    c.ChunkID,
+			"text":        c.Text,
+			"index":       c.Index,
+			"parent_uid":  c.ParentID,
+			"doc_uid":     extractor.MakeUID("Document", docID),
+			"token_count": c.TokenCount,
+		})
+	}
+	return out
+}
+
+func batchChunkLinks(chunks []extractor.Chunk) []map[string]any {
+	out := make([]map[string]any, 0, len(chunks)-1)
+
+	for i := 1; i < len(chunks); i++ {
+		out = append(out, map[string]any{
+			"from": chunks[i-1].ChunkID,
+			"to":   chunks[i].ChunkID,
+		})
+	}
+	return out
+}
+
 // OLD APPROACH
 // WRAPPER FOR HAVING A ROLLBACK IN CASE OF ERROR
 // TO SUPPORT TRANSACTIONAL INTEGRITY (to incase anyone fails everything is rolled back)
