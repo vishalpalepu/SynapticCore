@@ -117,12 +117,13 @@ MERGE (d)-[:HAS_CHUNK]->(chunk)
 
 	linkQuery := `
 UNWIND $links AS l 
-MATCH (prev:Chunk {uid : l.from})
-MATCH (curr:Chunk {uid : l.to})
+MATCH (prev:Chunk {uid : l.from , doc_uid : $doc_uid})
+MATCH (curr:Chunk {uid : l.to , doc_uid : $doc_uid})
 MERGE (prev)-[:NEXT_CHUNK]->(curr)
 `
 	_, err = tx.Run(ctx, linkQuery, map[string]any{
-		"links": batchChunkLinks(chunks),
+		"links":   batchChunkLinks(chunks),
+		"doc_uid": extractor.MakeUID("Document", docID),
 	})
 
 	return err
