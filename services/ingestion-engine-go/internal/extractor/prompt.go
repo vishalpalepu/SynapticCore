@@ -85,7 +85,9 @@ OUTPUT FORMAT (STRICT JSON ONLY)
     {
       "type": "string",
       "source_name": "string",
+      "source_label": "string",
       "target_name": "string",
+      "target_label": "string",
       "properties": {},
       "metadata": {
         "confidence": 0.0,
@@ -105,6 +107,21 @@ CRITICAL CONSTRAINTS
 - No explanation
 - No hallucination
 - If unsure → omit
+- Do NOT create nodes or relationships that are not explicitly supported by the ontology
+- DO NOT create source_label and target_label that are not defined in the ontology and not present in the text
+=====================
+FORBIDDEN EXTRACTIONS (STRICT)
+=====================
+
+- DO NOT create nodes for:
+  - chunk
+  - document
+  - source
+  - metadata identifiers
+
+- Ignore any concept of source tracking completely
+
+- Only extract real-world entities present in the text
 
 `, schema.NodeDetails, schema.RelationshipDetails)
 }

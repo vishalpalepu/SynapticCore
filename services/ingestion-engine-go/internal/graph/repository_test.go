@@ -2,6 +2,7 @@ package graph_test
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"testing"
@@ -33,6 +34,7 @@ func TestDocumentPackageIngestion(t *testing.T) {
 	if user == "" {
 		user = "neo4j"
 	}
+	fmt.Printf("NEO4J_URI: %s\n", uri)
 
 	driver, err := neo4j.NewDriverWithContext(uri, neo4j.BasicAuth(user, pass, ""))
 	if err != nil {
@@ -77,7 +79,7 @@ func TestDocumentPackageIngestion(t *testing.T) {
 		},
 	}
 
-	pkg := extractor.DocumentPackage{
+	pkg := &extractor.DocumentPackage{
 		DocID:         docID,
 		Chunks:        chunks,
 		Nodes:         nodes,

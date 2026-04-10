@@ -21,7 +21,7 @@ type Writer struct {
 
 // NEW APPROACH IS TO SEND THE DATA IN BATCHES (LIKE 10 CHUNKS WITH THEIR NODES AND RELS)
 
-func (w *Writer) WriteDocumentPackage(ctx context.Context, pkg extractor.DocumentPackage) error {
+func (w *Writer) WriteDocumentPackage(ctx context.Context, pkg *extractor.DocumentPackage) error {
 	session := w.Driver.NewSession(ctx, neo4j.SessionConfig{
 		AccessMode: neo4j.AccessModeWrite,
 	})

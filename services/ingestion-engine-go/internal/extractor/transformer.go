@@ -5,8 +5,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -74,12 +74,16 @@ func (t *Transformer) ExtractChunkOptimized(ctx context.Context, chunk Chunk) (*
 	}
 
 	systemPrompt := BuildSystemPrompt(t.Schema)
+	// userPrompt := fmt.Sprintf(
+	// 	"Extract graph data.\n\nChunkID: %s\nDocID: %s\n\nText:\n%s",
+	// 	chunk.ChunkID,
+	// 	chunk.DocID,
+	// 	chunk.Text,
+	// )
 	userPrompt := fmt.Sprintf(
-		"Extract graph data.\n\nChunkID: %s\nDocID: %s\n\nText:\n%s",
-		chunk.ChunkID,
-		chunk.DocID,
+		"Extract graph data from the following text.\n\nText:\n%s",
 		chunk.Text,
-	)
+	) // to avoid LLM to Create the Chunk node and Document Node itself
 
 	// 2. Retry logic (LLM is unreliable)
 	// this the update we retry to call the LLM three times then give up if error occures we wait 500ms then 1000ms then 1500ms each call
@@ -89,6 +93,7 @@ func (t *Transformer) ExtractChunkOptimized(ctx context.Context, chunk Chunk) (*
 	for i := 0; i < 3; i++ {
 		raw, err = t.Client.Extract(ctx, systemPrompt, userPrompt)
 		if err == nil {
+			fmt.Printf("LLM Output:\n%s\n", raw)
 			break
 		}
 		time.Sleep(time.Duration(i+1) * 500 * time.Millisecond)
@@ -321,7 +326,7 @@ func validateExtraction(graph *GraphResult, schema *SchemaContract) error {
 		}
 
 		if r.SourceLabel == "" || r.TargetLabel == "" {
-			return fmt.Errorf("index failure: relationship missing endpoint labels for UID %s", r.UID)
+			return fmt.Errorf("index failure: relationship missing endpoint labels for UID %s for this relationship %s", r.UID, r.Type)
 		}
 	}
 
@@ -380,49 +385,134 @@ type HTTPLLMClient struct {
 	Model   string
 }
 
+// func (c *HTTPLLMClient) Extract(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+// 	payload := map[string]any{
+// 		"model": c.Model,
+// 		"messages": []map[string]string{
+// 			{"role": "system", "content": systemPrompt},
+// 			{"role": "user", "content": userPrompt},
+// 		},
+// 		"temperature": 0.0,
+// 	}
+
+// 	b, err := json.Marshal(payload)
+
+// 	if err != nil {
+// 		return "", err
+// 	}
+
+// 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL, bytes.NewReader(b))
+// 	if err != nil {
+// 		return "", err
+// 	}
+
+// 	req.Header.Set("Content-Type", "application/json")
+// 	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+
+// 	client := &http.Client{Timeout: 45 * time.Second}
+
+// 	resp, err := client.Do(req)
+// 	if err != nil {
+// 		return "", err
+// 	}
+// 	defer resp.Body.Close()
+
+// 	if resp.StatusCode >= 300 {
+// 		return "", errors.New(resp.Status)
+// 	}
+
+// 	var decoded struct {
+// 		Output string `json:"output"`
+// 	}
+
+// 	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+// 		return "", err
+// 	}
+
+// 	return decoded.Output, nil
+// }
+
+// special for gemini api
 func (c *HTTPLLMClient) Extract(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
 	payload := map[string]any{
 		"model": c.Model,
 		"messages": []map[string]string{
-			{"role": "system", "content": systemPrompt},
-			{"role": "user", "content": userPrompt},
+			{
+				"role":    "system",
+				"content": systemPrompt,
+			},
+			{
+				"role":    "user",
+				"content": userPrompt,
+			},
 		},
 		"temperature": 0.0,
+		// optional but useful (model dependent)
+		"response_format": map[string]string{
+			"type": "json_object",
+		},
 	}
 
-	b, err := json.Marshal(payload)
-
+	body, err := json.Marshal(payload)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("marshal error: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL, bytes.NewReader(b))
+	// Use BaseURL instead of hardcoding
+	url := strings.TrimRight(c.BaseURL, "/") + "/chat/completions"
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		url,
+		bytes.NewReader(body),
+	)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("request creation failed: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.APIKey)
 
-	client := &http.Client{Timeout: 45 * time.Second}
+	httpClient := &http.Client{
+		Timeout: 360 * time.Second,
+	}
 
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("http request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read body failed: %w", err)
+	}
+
 	if resp.StatusCode >= 300 {
-		return "", errors.New(resp.Status)
+		return "", fmt.Errorf("llm error: %s | body: %s", resp.Status, string(respBody))
 	}
 
-	var decoded struct {
-		Output string `json:"output"`
+	var result struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
-		return "", err
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", fmt.Errorf("json decode failed: %w | raw: %s", err, string(respBody))
 	}
 
-	return decoded.Output, nil
+	if len(result.Choices) == 0 {
+		return "", fmt.Errorf("empty response | raw: %s", string(respBody))
+	}
+
+	content := strings.TrimSpace(result.Choices[0].Message.Content)
+	if content == "" {
+		return "", fmt.Errorf("empty content | raw: %s", string(respBody))
+	}
+
+	return content, nil
 }
