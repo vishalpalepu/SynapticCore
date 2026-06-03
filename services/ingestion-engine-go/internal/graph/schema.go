@@ -7,7 +7,7 @@ import (
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
-func (w *Writer) initializeSchema(ctx context.Context) error {
+func (w *Writer) InitializeSchema(ctx context.Context) error {
 
 	session := w.Driver.NewSession(ctx, neo4j.SessionConfig{
 		AccessMode: neo4j.AccessModeWrite,

@@ -85,16 +85,12 @@ func TestFullPipeline(t *testing.T) {
 	// ========================
 	docID := "test-doc-001"
 	text := `
-A senior cardiologist at a metropolitan hospital had been studying patterns in post-surgical recovery among patients with chronic heart conditions. Over several months, she observed that individuals who adhered to structured rehabilitation programs tended to show more stable progress compared to those who did not. 
-She documented these observations carefully, noting how patient history, 
-lifestyle factors, and timing of intervention influenced outcomes. 
-Her findings gradually contributed to a broader understanding within the department about how recovery trajectories could vary significantly even among similar cases.
-`
+A senior cardiologist at a metropolitan hospital had been studying patterns in post-surgical recovery among patients with chronic heart conditions. Over several months, she observed that individuals who adhered to structured rehabilitation programs tended to show more stable progress compared to those who did not.`
 
 	// ========================
 	// 5. Chunking
 	// ========================
-	chunks := extractor.ChuckText(docID, text, 10, 0.1)
+	chunks := extractor.ChuckText(docID, text, 20, 0.1)
 
 	pkg := &extractor.DocumentPackage{
 		DocID:  docID,

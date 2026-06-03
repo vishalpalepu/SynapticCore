@@ -12,7 +12,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-type ExtractorWorker struct {
+type ExtractorWorker struct { // i want to know what it is i forgot ?
 	Reader         *kafka.Reader
 	TripleProducer *kafka.Writer
 	Transformer    *extractor.Transformer
@@ -21,23 +21,33 @@ type ExtractorWorker struct {
 }
 
 func (w *ExtractorWorker) Start(ctx context.Context) {
-	workerCount := w.WorkerCount // how many background workers to run for processing messages in parallel
+	workerCount := w.WorkerCount
+	msgChan := make(chan kafka.Message, workerCount*2)
+	var wg sync.WaitGroup
 
-	msgChan := make(chan kafka.Message, workerCount*2) // creates a conveyer belt for messages to be processed by workers
-
+	// Spawn independent workers
 	for i := 0; i < workerCount; i++ {
-		go w.worker(ctx, i, msgChan) // creates 5 background workers to process messages in parallel, each worker will read from the msgChan and process messages as they come in
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			w.worker(ctx, workerID, msgChan)
+		}(i)
 	}
 
+	// Fetch Loop
 	for {
-		msg, err := w.Reader.FetchMessage(ctx)
+		msg, err := w.Reader.FetchMessage(ctx) // Fetch DOES NOT commit offset
 		if err != nil {
-			w.Logger.Printf("Error reading message: %v", err)
-			continue
+			if ctx.Err() != nil {
+				break // Graceful shutdown triggered
+			}
+			w.Logger.Printf("Extractor Fetch error: %v", err)
+			break
 		}
-
 		msgChan <- msg
 	}
+	close(msgChan) // Signal worker pool to drain
+	wg.Wait()      // Block until all workers have exited safely
 }
 
 func (w *ExtractorWorker) worker(ctx context.Context, workerID int, msgChan <-chan kafka.Message) {
@@ -107,7 +117,7 @@ func (w *ExtractorWorker) processMessage(ctx context.Context, msg kafka.Message)
 	})
 
 	if err != nil {
-		return nil
+		return err
 	}
 
 	// OFFSET COMMIT

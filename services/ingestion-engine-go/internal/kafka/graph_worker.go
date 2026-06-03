@@ -6,6 +6,7 @@ import (
 	"ingestion-engine-go/internal/extractor"
 	"ingestion-engine-go/internal/graph"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/segmentio/kafka-go"
@@ -13,28 +14,36 @@ import (
 
 type GraphWorker struct {
 	Reader      *kafka.Reader
-	Writer      *kafka.Writer
 	Logger      *log.Logger
 	GraphWriter *graph.Writer
-	workerCount int
+	WorkerCount int
 }
 
-func (w *GraphWorker) start(ctx context.Context) {
+func (w *GraphWorker) Start(ctx context.Context) {
+	msgChan := make(chan kafka.Message, w.WorkerCount*2)
+	var wg sync.WaitGroup
 
-	msgchan := make(chan kafka.Message, w.workerCount*2)
-
-	for i := 0; i < w.workerCount; i++ {
-		go w.worker(ctx, i, msgchan)
+	for i := 0; i < w.WorkerCount; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			w.worker(ctx, workerID, msgChan)
+		}(i)
 	}
 
 	for {
 		val, err := w.Reader.FetchMessage(ctx)
 		if err != nil {
-			w.Logger.Printf("Error reading message: %v", err)
-			continue
+			if ctx.Err() != nil {
+				break // Graceful shutdown
+			}
+			w.Logger.Printf("Graph Fetch error: %v", err)
+			break
 		}
-		msgchan <- val
+		msgChan <- val
 	}
+	close(msgChan)
+	wg.Wait()
 }
 
 func (w *GraphWorker) worker(ctx context.Context, workerID int, msgchan <-chan kafka.Message) {
