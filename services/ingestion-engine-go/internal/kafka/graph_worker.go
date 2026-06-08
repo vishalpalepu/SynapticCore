@@ -83,6 +83,7 @@ func (w *GraphWorker) process(ctx context.Context, msg kafka.Message) error {
 	if err := w.GraphWriter.WriteDocumentPackage(ctx, &pkg); err != nil {
 		if w.Logger != nil {
 			w.Logger.Printf("Error writing document package doc=%s err=%v", pkg.DocID, err)
+			return err
 		}
 	}
 
