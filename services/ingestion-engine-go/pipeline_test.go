@@ -30,9 +30,14 @@ func TestFullPipeline(t *testing.T) {
 		t.Fatalf("ontology load failed: %v", err)
 	}
 
+	// err = godotenv.Load()
+	// if err != nil {
+	// 	log.Println("Warning: .env file not found, falling back to system env")
+	// }
+
 	err = godotenv.Load()
 	if err != nil {
-		log.Println("Warning: .env file not found, falling back to system env")
+		t.Fatalf("failed to load .env: %v", err)
 	}
 
 	// ========================

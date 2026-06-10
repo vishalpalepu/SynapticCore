@@ -39,8 +39,8 @@ func TestEndToEndPipeline(t *testing.T) {
 	_ = godotenv.Load("../../.env")
 
 	brokers := "localhost:9092"
-	rawTopic := "raw-documents-test"
-	tripleTopic := "extracted-triples-test"
+	rawTopic := "raw-documents"
+	tripleTopic := "extracted-triples"
 	groupID := "test-pipeline-group"
 
 	neo4jURI := os.Getenv("NEO4J_URI")
@@ -66,7 +66,7 @@ func TestEndToEndPipeline(t *testing.T) {
 	_ = writer.InitializeSchema(ctx) // Idempotent check
 
 	// 2. Setup Mock Extraction Pipeline
-	schema, err := extractor.LoadOnthology("../../../shared/docs/ontology-v1.yaml")
+	schema, err := extractor.LoadOnthology("../../../../shared/docs/onthology-v1.yaml")
 	if err != nil {
 		t.Fatalf("Failed to load ontology schema: %v", err)
 	}
@@ -124,8 +124,8 @@ func TestEndToEndPipeline(t *testing.T) {
 
 	logger.Printf("Processing seed document %s into %s...", testDocID, rawTopic)
 	err = rawProducer.WriteMessages(ctx, kafkago.Message{
-		Key:   byte(testDocID),
-		Value: byte(rawDocText),
+		Key:   []byte(testDocID),
+		Value: []byte(rawDocText),
 	})
 	if err != nil {
 		logger.Fatalf("Failed to write seed document to Kafka: %v", err)

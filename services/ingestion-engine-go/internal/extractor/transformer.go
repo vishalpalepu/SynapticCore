@@ -74,16 +74,12 @@ func (t *Transformer) ExtractChunkOptimized(ctx context.Context, chunk Chunk) (*
 	}
 
 	systemPrompt := BuildSystemPrompt(t.Schema)
-	// userPrompt := fmt.Sprintf(
-	// 	"Extract graph data.\n\nChunkID: %s\nDocID: %s\n\nText:\n%s",
-	// 	chunk.ChunkID,
-	// 	chunk.DocID,
-	// 	chunk.Text,
-	// )
+
 	userPrompt := fmt.Sprintf(
 		"Extract graph data from the following text.\n\nText:\n%s",
 		chunk.Text,
-	) // to avoid LLM to Create the Chunk node and Document Node itself
+	)
+	// to avoid LLM to Create the Chunk node and Document Node itself
 
 	// 2. Retry logic (LLM is unreliable)
 	// this the update we retry to call the LLM three times then give up if error occures we wait 500ms then 1000ms then 1500ms each call
@@ -93,7 +89,6 @@ func (t *Transformer) ExtractChunkOptimized(ctx context.Context, chunk Chunk) (*
 	for i := 0; i < 3; i++ {
 		raw, err = t.Client.Extract(ctx, systemPrompt, userPrompt)
 		if err == nil {
-			fmt.Printf("LLM Output:\n%s\n", raw)
 			break
 		}
 		time.Sleep(time.Duration(i+1) * 500 * time.Millisecond)
