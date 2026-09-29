@@ -287,43 +287,6 @@ The graph also uses infrastructure-owned labels for documents and chunks. These 
 | Graceful shutdown path | Implemented |
 | Kafka consumer/worker code | Implemented |
 
-## Known limitations
-
-### Kafka broker/topic initialization
-
-The latest recorded integration test failed with:
-
-```text
-Unknown Topic Or Partition
-```
-
-The immediate finding was that the required topics were not initialized before the test attempted to produce data.
-
-A `kafka-init` Compose service was added, but the recorded implementation became stuck waiting for the broker and appears to contribute to connection pressure. This remains the current blocker.
-
-Do not mark Kafka integration as complete until:
-
-- the broker reaches a healthy state,
-- topic creation succeeds deterministically,
-- the integration test can produce and consume messages,
-- offsets are committed only after successful downstream persistence,
-- restart/retry behavior is verified.
-
-### LLM output truncation
-
-Development testing showed that smaller/free-tier models could return incomplete JSON for larger contexts. The pipeline was adjusted to handle truncation, but model capacity and input chunk size remain practical constraints.
-
-### Production readiness
-
-The current project demonstrates architectural and implementation work but should not yet be described as production-ready. Production claims require repeatable benchmarks, failure-injection tests, observability, security review, and deployment validation.
-
-## Documentation map
-
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — system design and data flow.
-- [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — local development, testing, operational checks, and known failure modes.
-- [`shared/docs/ontology-v1.yaml`](shared/docs/ontology-v1.yaml) — canonical schema contract.
-- [`shared/docs/architecture.md`](shared/docs/architecture.md) — keep this aligned with the public architecture documentation if it is retained.
-
 ## Project principles
 
 1. **The ontology is the contract.**
@@ -334,11 +297,3 @@ The current project demonstrates architectural and implementation work but shoul
 6. **Treat graceful shutdown and retry behavior as part of correctness, not polish.**
 7. **Document verified behavior separately from intended architecture.**
 
-## References
-
-- GitHub — About repository README files: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-readmes
-- GitHub — Repository best practices: https://docs.github.com/en/repositories/creating-and-managing-repositories/best-practices-for-repositories
-- Apache Kafka — Design and message delivery semantics: https://kafka.apache.org/41/design/design/
-- Neo4j — Constraints: https://neo4j.com/docs/cypher-manual/current/schema/constraints/create-constraints/
-- Neo4j — Transactional behavior: https://neo4j.com/docs/operations-manual/current/database-internals/
-- Model Context Protocol — Server primitives: https://modelcontextprotocol.io/specification/draft/server/index
