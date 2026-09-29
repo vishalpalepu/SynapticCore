@@ -286,11 +286,6 @@ The graph also uses infrastructure-owned labels for documents and chunks. These 
 | DocumentPackage batch write | Tested |
 | Graceful shutdown path | Implemented |
 | Kafka consumer/worker code | Implemented |
-| Kafka end-to-end integration | **Blocked** |
-| Kafka topic initialization in Compose | **Blocked / under investigation** |
-| Python reasoning layer | Not verified by this development log |
-| MCP layer | Not verified by this development log |
-| Redis semantic cache | Not verified by this development log |
 
 ## Known limitations
 
